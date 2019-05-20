@@ -37,7 +37,17 @@ static loff_t globalmem_llseek(struct file* filp, loff_t offset, int orig);
 //static int globalmem_ioclt(struct node* inodep, struct file* filp, unsigned int cmd, unsigned long arg);
 static int globalmem_ioclt(struct node* inodep, struct file* filp, unsigned int cmd, unsigned long arg)
 {
-	int i;
+	switch (cmd)
+	{
+	case MEM_CLEAR:
+		memset(dev.mem, 0, GLOBALMEM_SIZE);
+		printk(KERN_INFO "globalmem is set to zero\n");
+		break;
+	default:
+		return -EINVAL;
+		break;
+	}
+
 	return 0;
 }
 
@@ -93,17 +103,100 @@ static ssize_t globalmem_read(struct file* filp, char __user* buf, size_t count,
 {
 	unsigned long p = *ppos;
 	int ret = 0;
+
+	if (p >= GLOBALMEM_SIZE)
+	{
+		return 0;
+	}
+
+	if (count > GLOBALMEM_SIZE - p)
+	{
+		count = GLOBALMEM_SIZE - p;
+	}
+
+	if (copy_to_user(buf, (void*)(dev.mem + p), count))
+	{
+		ret = -EFAULT;
+	}
+	else
+	{
+		*ppos += count;
+		ret = count;
+		printk(KERN_INFO "read %d bytes from %d\n", count, p);
+	}
+
 	return ret;
 }
 static ssize_t globalmem_write(struct file* filp, char __user* buf, size_t count, loff_t* ppos)
 {
 	int ret = 0;
+	unsigned long p = *ppos;
+
+	if (p >= GLOBALMEM_SIZE)
+	{
+		return 0;
+	}
+
+	if (count > GLOBALMEM_SIZE - p)
+	{
+		count = GLOBALMEM_SIZE - p;
+	}
+
+	if (copy_from_user(dev.mem + p, buf, count))
+	{
+		ret = -EFAULT;
+	}
+	else
+	{
+		*ppos += count;
+		ret = count;
+	}
+	printk(KERN_INFO "write %d bytra from %d\n", count, p);
 
 	return ret;
 }
 static loff_t globalmem_llseek(struct file* filp, loff_t offset, int orig)
 {
 	loff_t ret = 0;
+	switch (orig)
+	{
+	case 0:
+		if (offset < 0)
+		{
+			ret = -EINVAL;
+			break;
+		}
+
+		if ((unsigned int)offset > GLOBALMEM_SIZE )
+		{
+			ret = -EINVAL;
+			break;
+		}
+
+		filp->f_pos = (unsigned int)offset;
+		ret = filp->f_pos;
+
+		break;
+	case 1:
+		if ((filp->f_pos + offset) > GLOBALMEM_SIZE)
+		{
+			ret = -EINVAL;
+			break;
+		}
+
+		if ((filp->f_pos + offset) < 0)
+		{
+			ret = -EINVAL;
+			break;
+		}
+
+		filp->f_pos += offset;
+		ret = filp->f_pos;
+
+		break;
+	default:
+		ret = -EINVAL;
+	}
 
 	return ret;
 }
