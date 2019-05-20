@@ -16,7 +16,7 @@
 #include <asm/hardware.h>
 #include <asm/system.h>
 
-#define GLOBALMEM_SIZE 0X10000
+#define GLOBALMEM_SIZE 0X1000
 #define MEM_CLEAR 0X1
 #define GLOBALMEM_MAJOR 250
 
@@ -27,7 +27,7 @@ struct globalmem_dev {
 		unsigned char mem[GLOBALMEM_SIZE];
 };
 
-struct globalmem_dev dev;
+struct globalmem_dev *global_dev;
 static int globalmem_init(void);
 static void globalmem_setup_cdev();
 
@@ -37,10 +37,12 @@ static loff_t globalmem_llseek(struct file* filp, loff_t offset, int orig);
 //static int globalmem_ioclt(struct node* inodep, struct file* filp, unsigned int cmd, unsigned long arg);
 static int globalmem_ioclt(struct node* inodep, struct file* filp, unsigned int cmd, unsigned long arg)
 {
+	struct globalmem_dev* dev = filp->private_data;
+
 	switch (cmd)
 	{
 	case MEM_CLEAR:
-		memset(dev.mem, 0, GLOBALMEM_SIZE);
+		memset(dev->mem, 0, GLOBALMEM_SIZE);
 		printk(KERN_INFO "globalmem is set to zero\n");
 		break;
 	default:
@@ -51,12 +53,26 @@ static int globalmem_ioclt(struct node* inodep, struct file* filp, unsigned int 
 	return 0;
 }
 
+int globalmem_open(struct inode* inode, struct file* filp)
+{
+	filp->private_data = global_dev;
+
+	return 0;
+}
+
+int globalmem_release(struct inode* indoe, struct file* filp)
+{
+	return 0;
+}
+
 static const struct file_operations globalmem_fops = {
 	.owner = THIS_MODULE,
 	.llseek = globalmem_llseek,
 	.read = globalmem_read,
 	.write = globalmem_write,
 	.ioctl = globalmem_ioclt,
+	.open = globalmem_open,
+	.release = globalmem_release,
 };
 
 static int globalmem_init(void)
@@ -79,20 +95,31 @@ static int globalmem_init(void)
 		return result;
 	}
 	
-	globalmem_setup_cdev();
+	global_dev = kmalloc(sizeof(struct globalmem_dev), GFP_KERNEL);
+	if (!global_dev)
+	{
+		result = -ENOMEM;
+
+		goto fail_malloc;
+	}
+	
+	globalmem_setup_cdev(global_dev, 0);
 
 	return 0;
+
+fail_malloc:
+	unregister_chrdev_region(devno, 1);
+
+	return result;
 }
 
-
-
-static void globalmem_setup_cdev()
+static void globalmem_setup_cdev(struct globalmem_dev* dev, int index)
 {
 	int err, devno = MKDEV(globalmem_major, 0);
 
-	cdev_init(&dev.cdev, &globalmem_fops);
-	dev.cdev.owner = THIS_MODULE;
-	err = cdev_add(&dev.cdev, devno, 1);
+	cdev_init(&dev->cdev, &globalmem_fops);
+	dev->cdev.owner = THIS_MODULE;
+	err = cdev_add(&dev->cdev, devno, 1);
 	if (err)
 	{
 		printk(KERN_NOTICE "error %d adding globalmem", err);
@@ -103,7 +130,7 @@ static ssize_t globalmem_read(struct file* filp, char __user* buf, size_t count,
 {
 	unsigned long p = *ppos;
 	int ret = 0;
-
+	struct globalmem_dev *dev = filp->private_data;
 	if (p >= GLOBALMEM_SIZE)
 	{
 		return 0;
@@ -114,7 +141,7 @@ static ssize_t globalmem_read(struct file* filp, char __user* buf, size_t count,
 		count = GLOBALMEM_SIZE - p;
 	}
 
-	if (copy_to_user(buf, (void*)(dev.mem + p), count))
+	if (copy_to_user(buf, (void*)(dev->mem + p), count))
 	{
 		ret = -EFAULT;
 	}
@@ -131,7 +158,7 @@ static ssize_t globalmem_write(struct file* filp, char __user* buf, size_t count
 {
 	int ret = 0;
 	unsigned long p = *ppos;
-
+	struct globalmem_dev *dev = filp->private_data;
 	if (p >= GLOBALMEM_SIZE)
 	{
 		return 0;
@@ -142,7 +169,7 @@ static ssize_t globalmem_write(struct file* filp, char __user* buf, size_t count
 		count = GLOBALMEM_SIZE - p;
 	}
 
-	if (copy_from_user(dev.mem + p, buf, count))
+	if (copy_from_user(dev->mem + p, buf, count))
 	{
 		ret = -EFAULT;
 	}
@@ -201,9 +228,18 @@ static loff_t globalmem_llseek(struct file* filp, loff_t offset, int orig)
 	return ret;
 }
 
-//module_init(sixth_drv_init);
+void globalmem_exit(void)
+{
+	cdev_del(&global_dev->cdev);
+	kfree(global_dev);
+	unregister_chrdev_region(MKDEV(globalmem_major, 0), 1);
+}
 
-//module_exit(sixth_drv_exit);
+MODULE_AUTHOR("MR.WANG");
+MODULE_LICENSE("Dual BSD/GPL");
+module_param(globalmem_major, int, S_IRUGO);
 
-MODULE_LICENSE("GPL");
+module_init(globalmem_init);
+module_exit(globalmem_exit);
+
 
